@@ -4,6 +4,7 @@ import LoginPage from "./pages/LoginPage"
 import RegisterPage from "./pages/RegisterPage"
 import DashboardPage from "./pages/DashboardPage"
 import EditorPage from "./pages/EditorPage"
+import JoinPage from "./pages/JoinPage"        // ← add this import
 
 const Private = ({ children }) => {
   const token = useAuthStore((s) => s.token)
@@ -23,7 +24,7 @@ export default function App() {
         <Route path="/register" element={<Guest><RegisterPage /></Guest>} />
         <Route path="/" element={<Private><DashboardPage /></Private>} />
         <Route path="/editor/:id" element={<Private><EditorPage /></Private>} />
-        <Route path="/join/:token" element={<Private><EditorPage /></Private>} />
+        <Route path="/join/:token" element={<Private><JoinPage /></Private>} />  {/* ← fixed */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
