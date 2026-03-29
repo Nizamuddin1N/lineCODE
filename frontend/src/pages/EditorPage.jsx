@@ -10,23 +10,30 @@ import VersionPanel from "../components/Sidebar/VersionPanel"
 
 const LANGUAGES = [
   "javascript","typescript","python","java",
-  "cpp","go","rust","html","css","sql","bash","json"
+  "cpp","go","rust","html","css","sql","bash","json",
 ]
 
 export default function EditorPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuthStore()
-
-  const [doc, setDoc] = useState(null)
   const [versions, setVersions] = useState([])
+  const [doc, setDoc] = useState(null)
   const [loading, setLoading] = useState(true)
   const [sidebarTab, setSidebarTab] = useState("users")
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleInput, setTitleInput] = useState("")
   const [copied, setCopied] = useState(false)
+  const [userRole, setUserRole] = useState("viewer")
 
-  const { socket, connected, activeUsers, notification, emitOperation, emitCursor } = useSocket(id)
+  const {
+    socket,
+    connected,
+    activeUsers,
+    notification,
+    emitOperation,
+    emitCursor,
+  } = useSocket(id)
 
   useEffect(() => {
     const fetchDoc = async () => {
@@ -34,6 +41,7 @@ export default function EditorPage() {
         const res = await api.get(`/documents/${id}`)
         setDoc(res.data)
         setTitleInput(res.data.title)
+        setUserRole(res.data.userRole || "viewer")
       } catch {
         navigate("/")
       } finally {
@@ -44,15 +52,18 @@ export default function EditorPage() {
     fetchVersions()
   }, [id])
 
-  const fetchVersions = async () => {
+    const fetchVersions = async () => {
     try {
-      const res = await api.get(`/documents/${id}/versions`)
-      setVersions(res.data)
-    } catch {}
-  }
-
+        const res = await api.get(`/documents/${id}/versions`)
+        // Guard: ensure we always set an array
+        setVersions(Array.isArray(res.data) ? res.data : [])
+    } catch {
+        setVersions([])
+    }
+    }
   const saveContent = async (content, shouldSave) => {
     if (!shouldSave) return
+    if (userRole === "viewer") return  // viewers cannot save
     try {
       await api.put(`/documents/${id}`, { content })
       fetchVersions()
@@ -64,6 +75,7 @@ export default function EditorPage() {
       setEditingTitle(false)
       return
     }
+    if (userRole === "viewer") return
     try {
       await api.put(`/documents/${id}`, { title: titleInput })
       setDoc((d) => ({ ...d, title: titleInput }))
@@ -73,6 +85,7 @@ export default function EditorPage() {
   }
 
   const changeLanguage = async (lang) => {
+    if (userRole === "viewer") return
     setDoc((d) => ({ ...d, language: lang }))
     await api.put(`/documents/${id}`, { language: lang })
   }
@@ -84,10 +97,14 @@ export default function EditorPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const restoreVersion = async (content) => {
-    await api.put(`/documents/${id}`, { content })
-    setDoc((d) => ({ ...d, content }))
-    fetchVersions()
+  const restoreVersion = async (versionId) => {
+    try {
+      const res = await api.post(`/documents/${id}/versions/restore`, { versionId })
+      setDoc((d) => ({ ...d, content: res.data.content }))
+      fetchVersions()
+    } catch (err) {
+      alert(err.response?.data?.error || "Restore failed")
+    }
   }
 
   if (loading) return (
@@ -96,14 +113,15 @@ export default function EditorPage() {
     </div>
   )
 
+  const isReadOnly = userRole === "viewer"
+
   return (
     <div style={s.page}>
       <Navbar />
 
-      {/* Editor header */}
       <div style={s.editorHeader}>
         <div style={s.titleArea}>
-          {editingTitle ? (
+          {editingTitle && !isReadOnly ? (
             <input
               style={s.titleInput}
               value={titleInput}
@@ -113,7 +131,11 @@ export default function EditorPage() {
               onKeyDown={(e) => e.key === "Enter" && saveTitle()}
             />
           ) : (
-            <span style={s.titleText} onClick={() => setEditingTitle(true)} title="Click to rename">
+            <span
+              style={{ ...s.titleText, cursor: isReadOnly ? "default" : "pointer" }}
+              onClick={() => !isReadOnly && setEditingTitle(true)}
+              title={isReadOnly ? "Viewers cannot rename" : "Click to rename"}
+            >
               {doc?.title}
             </span>
           )}
@@ -122,11 +144,17 @@ export default function EditorPage() {
             style={s.langSelect}
             value={doc?.language}
             onChange={(e) => changeLanguage(e.target.value)}
+            disabled={isReadOnly}
           >
             {LANGUAGES.map((l) => (
               <option key={l} value={l}>{l}</option>
             ))}
           </select>
+
+          {/* Role badge */}
+          <span style={{ ...s.roleBadge, ...(isReadOnly ? s.viewerBadge : s.editorBadge) }}>
+            {userRole}
+          </span>
         </div>
 
         <button style={s.shareBtn} onClick={copyShareLink}>
@@ -135,21 +163,20 @@ export default function EditorPage() {
       </div>
 
       <div style={s.body}>
-        {/* Main editor */}
         <div style={s.editorArea}>
           <CodeEditor
             docId={id}
             initialContent={doc?.content}
             initialLanguage={doc?.language}
             onContentChange={saveContent}
-            socket={socket}              // ← add
-            connected={connected}       // ← add
-            emitOperation={emitOperation}  // ← add
-            emitCursor={emitCursor}     // ← add
+            socket={socket}
+            connected={connected}
+            emitOperation={emitOperation}
+            emitCursor={emitCursor}
+            readOnly={isReadOnly}
           />
         </div>
 
-        {/* Sidebar */}
         <div style={s.sidebar}>
           <div style={s.tabs}>
             <button
@@ -170,13 +197,16 @@ export default function EditorPage() {
             {sidebarTab === "users" ? (
               <UsersPanel users={activeUsers} currentUserId={user?.id} />
             ) : (
-              <VersionPanel versions={versions} onRestore={restoreVersion} />
+              <VersionPanel
+                versions={versions}
+                onRestore={restoreVersion}
+                userRole={userRole}
+              />
             )}
           </div>
         </div>
       </div>
 
-      {/* Join/leave notification toast */}
       {notification && (
         <div style={{ ...s.toast, borderLeft: `3px solid ${notification.color}` }}>
           {notification.message}
@@ -189,10 +219,13 @@ export default function EditorPage() {
 const s = {
   page: { height: "100vh", display: "flex", flexDirection: "column", background: "#0a0a0f", overflow: "hidden" },
   editorHeader: { height: 48, background: "#111118", borderBottom: "1px solid #2a2a3a", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", flexShrink: 0 },
-  titleArea: { display: "flex", alignItems: "center", gap: 12 },
-  titleText: { fontSize: 14, color: "#e8e8f0", cursor: "pointer", fontWeight: 500, padding: "2px 6px", borderRadius: 4 },
+  titleArea: { display: "flex", alignItems: "center", gap: 10 },
+  titleText: { fontSize: 14, color: "#e8e8f0", fontWeight: 500, padding: "2px 6px", borderRadius: 4 },
   titleInput: { fontSize: 14, color: "#e8e8f0", background: "#0a0a0f", border: "1px solid #7c6fcd", borderRadius: 4, padding: "3px 8px", width: 200 },
   langSelect: { background: "#0a0a0f", border: "1px solid #2a2a3a", color: "#8888a0", borderRadius: 4, padding: "3px 8px", fontSize: 12, cursor: "pointer" },
+  roleBadge: { fontSize: 10, borderRadius: 4, padding: "2px 7px", fontWeight: 500 },
+  editorBadge: { background: "rgba(46,204,113,0.1)", color: "#2ecc71", border: "1px solid rgba(46,204,113,0.2)" },
+  viewerBadge: { background: "rgba(136,136,160,0.1)", color: "#8888a0", border: "1px solid rgba(136,136,160,0.2)" },
   shareBtn: { background: "rgba(124,111,205,0.15)", color: "#7c6fcd", border: "1px solid rgba(124,111,205,0.3)", borderRadius: 6, padding: "6px 14px", fontSize: 12, cursor: "pointer" },
   body: { flex: 1, display: "flex", overflow: "hidden" },
   editorArea: { flex: 1, overflow: "hidden" },

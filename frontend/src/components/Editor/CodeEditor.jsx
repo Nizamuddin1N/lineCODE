@@ -6,7 +6,7 @@ import useAuthStore from "../../store/authStore"
 
 const SAVE_DEBOUNCE = 2000
 
-export default function CodeEditor({ docId, initialContent, initialLanguage, onContentChange, socket, connected, emitOperation, emitCursor,}) {
+export default function CodeEditor({ docId, initialContent, initialLanguage, onContentChange, socket, connected, emitOperation, emitCursor, readOnly = false,}) {
   const editorRef = useRef(null)
   const monacoRef = useRef(null)
   const revisionRef = useRef(0)
@@ -193,6 +193,7 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
             cursorBlinking: "smooth",
             smoothScrolling: true,
             tabSize: 2,
+            readOnly,
           }}
         />
         <CursorLayer
