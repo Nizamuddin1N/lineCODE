@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken"
 import Document from "../modules/document/documentModel.js"
+import Message from "../modules/chat/chatModel.js"
 import {
   getRevision,
   addOperation,
@@ -7,14 +8,6 @@ import {
   applyOperation,
 } from "./otEngine.js"
 
-/*
-  activeRooms shape:
-  {
-    [docId]: {
-      [socketId]: { userId, name, color, cursor: { line, column } }
-    }
-  }
-*/
 const activeRooms = new Map()
 
 const getUsersInRoom = (docId) => {
@@ -27,20 +20,10 @@ const getUsersInRoom = (docId) => {
 }
 
 const authenticateSocket = (socket) => {
-  /*
-    Three ways to authenticate a socket:
-    A - Pass token in handshake auth (most secure)
-    B - Pass token in query string (simpler but less secure)
-    C - No auth (public rooms only)
-    
-    We use A with fallback to B.
-  */
   const token =
     socket.handshake.auth?.token ||
     socket.handshake.query?.token
-
   if (!token) return null
-
   try {
     return jwt.verify(token, process.env.JWT_SECRET)
   } catch {
@@ -59,7 +42,7 @@ export const initSocket = (io) => {
   io.on("connection", (socket) => {
     console.log(`Socket connected: ${socket.id} | User: ${socket.user.id}`)
 
-    // ─── Join a document room ───────────────────────────────────────
+    // ─── Join document room ────────────────────────────────────────
     socket.on("join-document", async ({ docId, user }) => {
       try {
         const doc = await Document.findById(docId)
@@ -75,7 +58,6 @@ export const initSocket = (io) => {
           cursor: { line: 1, column: 1 },
         }
 
-        // Send document state to the joining user
         socket.emit("document-data", {
           content: doc.content,
           title: doc.title,
@@ -83,14 +65,18 @@ export const initSocket = (io) => {
           revision: getRevision(docId),
         })
 
-        // Tell everyone in the room about the updated user list
         io.to(docId).emit("active-users", getUsersInRoom(docId))
-
-        // Tell others someone joined
         socket.to(docId).emit("user-joined", {
           name: user.name,
           color: user.color,
         })
+
+        // Send last 50 messages as chat history on join
+        const history = await Message.find({ docId })
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .lean()
+        socket.emit("chat-history", history.reverse())
 
         console.log(`User ${user.name} joined doc ${docId}`)
       } catch (err) {
@@ -98,44 +84,73 @@ export const initSocket = (io) => {
       }
     })
 
-    // ─── Receive and broadcast an edit operation ────────────────────
+    // ─── Send message ──────────────────────────────────────────────
+    socket.on("send-message", async ({ docId, message }) => {
+      /*
+        Why save to DB before broadcasting?
+        If we broadcast first and DB save fails, users see
+        a message that was never actually stored. On refresh
+        it would disappear — confusing and broken.
+        Save first, broadcast only on success.
+      */
+      if (!message?.trim()) return
+
+      try {
+        const room = activeRooms.get(docId)
+        const sender = room?.[socket.id]
+
+        const saved = await Message.create({
+          docId,
+          senderId: socket.user.id,
+          senderName: sender?.name || "Unknown",
+          senderColor: sender?.color || "#7c6fcd",
+          message: message.trim(),
+        })
+
+        const payload = {
+          _id: saved._id,
+          senderId: saved.senderId,
+          senderName: saved.senderName,
+          senderColor: saved.senderColor,
+          message: saved.message,
+          createdAt: saved.createdAt,
+        }
+
+        // Broadcast to everyone in the room including sender
+        io.to(docId).emit("receive-message", payload)
+      } catch (err) {
+        socket.emit("error", { message: "Message failed to send" })
+      }
+    })
+
+    // ─── OT operation ──────────────────────────────────────────────
     socket.on("send-operation", async ({ docId, operation, revision }) => {
       try {
-        // Transform operation against any ops that happened after client's revision
         const transformed = transformAgainstHistory(docId, operation, revision)
-
-        // Add to server history
         addOperation(docId, transformed)
 
-        // Apply to document in DB (debounced — only save every 30 ops or on disconnect)
         const doc = await Document.findById(docId)
         if (doc) {
           doc.content = applyOperation(doc.content, transformed)
           await doc.save()
         }
 
-        // Broadcast the transformed operation to everyone else in the room
         socket.to(docId).emit("receive-operation", {
           operation: transformed,
           revision: getRevision(docId),
         })
-
-        // Send acknowledgment back to sender with new revision
         socket.emit("operation-ack", { revision: getRevision(docId) })
       } catch (err) {
         socket.emit("error", { message: err.message })
       }
     })
 
-    // ─── Cursor position update ─────────────────────────────────────
+    // ─── Cursor move ───────────────────────────────────────────────
     socket.on("cursor-move", ({ docId, cursor }) => {
       if (!activeRooms.has(docId)) return
       const room = activeRooms.get(docId)
-      if (room[socket.id]) {
-        room[socket.id].cursor = cursor
-      }
+      if (room[socket.id]) room[socket.id].cursor = cursor
 
-      // Broadcast to others — not back to sender
       socket.to(docId).emit("cursor-update", {
         socketId: socket.id,
         userId: socket.user.id,
@@ -145,18 +160,15 @@ export const initSocket = (io) => {
       })
     })
 
-    // ─── Leave a document room ──────────────────────────────────────
+    // ─── Leave document ────────────────────────────────────────────
     socket.on("leave-document", ({ docId }) => {
       handleLeave(socket, io, docId)
     })
 
-    // ─── Disconnect ─────────────────────────────────────────────────
+    // ─── Disconnect ────────────────────────────────────────────────
     socket.on("disconnect", () => {
-      // Find which rooms this socket was in and clean up
       for (const [docId, room] of activeRooms.entries()) {
-        if (room[socket.id]) {
-          handleLeave(socket, io, docId)
-        }
+        if (room[socket.id]) handleLeave(socket, io, docId)
       }
       console.log(`Socket disconnected: ${socket.id}`)
     })
@@ -170,14 +182,9 @@ const handleLeave = (socket, io, docId) => {
   const leavingUser = room[socket.id]
   delete room[socket.id]
 
-  if (Object.keys(room).length === 0) {
-    activeRooms.delete(docId)
-  }
+  if (Object.keys(room).length === 0) activeRooms.delete(docId)
 
   socket.leave(docId)
   io.to(docId).emit("active-users", getUsersInRoom(docId))
-
-  if (leavingUser) {
-    io.to(docId).emit("user-left", { name: leavingUser.name })
-  }
+  if (leavingUser) io.to(docId).emit("user-left", { name: leavingUser.name })
 }

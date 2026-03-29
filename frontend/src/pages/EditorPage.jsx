@@ -7,6 +7,7 @@ import Navbar from "../components/UI/Navbar"
 import CodeEditor from "../components/Editor/CodeEditor"
 import UsersPanel from "../components/Sidebar/UsersPanel"
 import VersionPanel from "../components/Sidebar/VersionPanel"
+import ChatPanel from "../components/Chat/ChatPanel"           // ← add
 
 const LANGUAGES = [
   "javascript","typescript","python","java",
@@ -17,24 +18,40 @@ export default function EditorPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuthStore()
+
+  const [doc, setDoc] = useState(null)
   const [versions, setVersions] = useState([])
   const [restoredContent, setRestoredContent] = useState(null)
-  const [doc, setDoc] = useState(null)
   const [loading, setLoading] = useState(true)
   const [sidebarTab, setSidebarTab] = useState("users")
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleInput, setTitleInput] = useState("")
   const [copied, setCopied] = useState(false)
   const [userRole, setUserRole] = useState("viewer")
+  const [unreadCount, setUnreadCount] = useState(0)           // ← add
 
   const {
     socket,
     connected,
     activeUsers,
     notification,
+    messages,
+    sendMessage,
     emitOperation,
     emitCursor,
   } = useSocket(id)
+
+  // Track unread messages when chat tab is not active
+  useEffect(() => {
+    if (sidebarTab !== "chat" && messages.length > 0) {
+      setUnreadCount((c) => c + 1)
+    }
+  }, [messages])
+
+  // Clear unread count when chat tab is opened
+  useEffect(() => {
+    if (sidebarTab === "chat") setUnreadCount(0)
+  }, [sidebarTab])
 
   useEffect(() => {
     const fetchDoc = async () => {
@@ -53,18 +70,18 @@ export default function EditorPage() {
     fetchVersions()
   }, [id])
 
-    const fetchVersions = async () => {
+  const fetchVersions = async () => {
     try {
-        const res = await api.get(`/documents/${id}/versions`)
-        // Guard: ensure we always set an array
-        setVersions(Array.isArray(res.data) ? res.data : [])
+      const res = await api.get(`/documents/${id}/versions`)
+      setVersions(Array.isArray(res.data) ? res.data : [])
     } catch {
-        setVersions([])
+      setVersions([])
     }
-    }
+  }
+
   const saveContent = async (content, shouldSave) => {
     if (!shouldSave) return
-    if (userRole === "viewer") return  // viewers cannot save
+    if (userRole === "viewer") return
     try {
       await api.put(`/documents/${id}`, { content })
       fetchVersions()
@@ -98,17 +115,16 @@ export default function EditorPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-    const restoreVersion = async (versionId) => {
+  const restoreVersion = async (versionId) => {
     try {
-        const res = await api.post(`/documents/${id}/versions/restore`, { versionId })
-        // Push restored content directly into Monaco — no reload needed
-        setRestoredContent(res.data.content)
-        setDoc((d) => ({ ...d, content: res.data.content }))
-        fetchVersions()
+      const res = await api.post(`/documents/${id}/versions/restore`, { versionId })
+      setRestoredContent(res.data.content)
+      setDoc((d) => ({ ...d, content: res.data.content }))
+      fetchVersions()
     } catch (err) {
-        alert(err.response?.data?.error || "Restore failed")
+      alert(err.response?.data?.error || "Restore failed")
     }
-    }
+  }
 
   if (loading) return (
     <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0a0a0f" }}>
@@ -154,7 +170,6 @@ export default function EditorPage() {
             ))}
           </select>
 
-          {/* Role badge */}
           <span style={{ ...s.roleBadge, ...(isReadOnly ? s.viewerBadge : s.editorBadge) }}>
             {userRole}
           </span>
@@ -195,16 +210,32 @@ export default function EditorPage() {
             >
               History
             </button>
+            <button
+              style={{ ...s.tab, ...(sidebarTab === "chat" ? s.activeTab : {}) }}
+              onClick={() => setSidebarTab("chat")}
+            >
+              Chat
+              {unreadCount > 0 && sidebarTab !== "chat" && (
+                <span style={s.unreadBadge}>{unreadCount > 9 ? "9+" : unreadCount}</span>
+              )}
+            </button>
           </div>
 
           <div style={s.sidebarContent}>
-            {sidebarTab === "users" ? (
+            {sidebarTab === "users" && (
               <UsersPanel users={activeUsers} currentUserId={user?.id} />
-            ) : (
+            )}
+            {sidebarTab === "versions" && (
               <VersionPanel
                 versions={versions}
                 onRestore={restoreVersion}
                 userRole={userRole}
+              />
+            )}
+            {sidebarTab === "chat" && (
+              <ChatPanel
+                messages={messages}
+                sendMessage={sendMessage}
               />
             )}
           </div>
@@ -235,8 +266,9 @@ const s = {
   editorArea: { flex: 1, overflow: "hidden" },
   sidebar: { width: 220, background: "#111118", borderLeft: "1px solid #2a2a3a", display: "flex", flexDirection: "column", flexShrink: 0 },
   tabs: { display: "flex", borderBottom: "1px solid #2a2a3a", flexShrink: 0 },
-  tab: { flex: 1, padding: "10px 0", fontSize: 12, color: "#55556a", background: "transparent", borderBottom: "2px solid transparent", cursor: "pointer" },
+  tab: { flex: 1, padding: "10px 0", fontSize: 11, color: "#55556a", background: "transparent", borderBottom: "2px solid transparent", cursor: "pointer", position: "relative" },
   activeTab: { color: "#7c6fcd", borderBottom: "2px solid #7c6fcd" },
-  sidebarContent: { flex: 1, overflowY: "auto" },
+  unreadBadge: { position: "absolute", top: 4, right: 4, background: "#e74c3c", color: "#fff", borderRadius: 8, fontSize: 9, padding: "1px 4px", lineHeight: 1.4 },
+  sidebarContent: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" },
   toast: { position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#16161f", border: "1px solid #2a2a3a", borderRadius: 8, padding: "10px 16px", fontSize: 13, color: "#e8e8f0", whiteSpace: "nowrap" },
 }

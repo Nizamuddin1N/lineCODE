@@ -8,14 +8,12 @@ export const useSocket = (docId) => {
   const [activeUsers, setActiveUsers] = useState([])
   const [connected, setConnected] = useState(false)
   const [notification, setNotification] = useState(null)
+  const [messages, setMessages] = useState([])        // ← add
 
   useEffect(() => {
     if (!docId || !token || !user) return
 
-    // Disconnect any existing socket before creating new one
-    if (socketRef.current) {
-      socketRef.current.disconnect()
-    }
+    if (socketRef.current) socketRef.current.disconnect()
 
     const socket = io(import.meta.env.VITE_SOCKET_URL, {
       auth: { token },
@@ -27,14 +25,9 @@ export const useSocket = (docId) => {
     socket.on("connect", () => {
       setConnected(true)
       console.log("Socket connected, joining doc:", docId)
-      // Emit join with full user object
       socket.emit("join-document", {
         docId,
-        user: {
-          id: user.id,
-          name: user.name,
-          color: user.color,
-        },
+        user: { id: user.id, name: user.name, color: user.color },
       })
     })
 
@@ -61,6 +54,15 @@ export const useSocket = (docId) => {
       showNotification(`${name} left`, "#888")
     })
 
+    // ─── Chat events ─────────────────────────────────────────────
+    socket.on("chat-history", (history) => {
+      setMessages(Array.isArray(history) ? history : [])
+    })
+
+    socket.on("receive-message", (msg) => {
+      setMessages((prev) => [...prev, msg])
+    })
+
     socket.on("error", ({ message }) => {
       console.error("Socket error:", message)
     })
@@ -70,7 +72,7 @@ export const useSocket = (docId) => {
       socket.emit("leave-document", { docId })
       socket.disconnect()
     }
-  }, [docId, token, user?.id])  // user?.id ensures re-run if user changes
+  }, [docId, token, user?.id])
 
   const showNotification = (message, color) => {
     setNotification({ message, color, id: Date.now() })
@@ -85,11 +87,17 @@ export const useSocket = (docId) => {
     socketRef.current?.emit("cursor-move", { docId, cursor })
   }, [docId])
 
+  const sendMessage = useCallback((message) => {
+    socketRef.current?.emit("send-message", { docId, message })
+  }, [docId])
+
   return {
     socket: socketRef.current,
     connected,
     activeUsers,
     notification,
+    messages,
+    sendMessage,
     emitOperation,
     emitCursor,
   }

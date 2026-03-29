@@ -7,6 +7,7 @@ import cors from "cors"
 import connectDB from "./config/db.js"
 import authRoutes from "./modules/auth/authRoutes.js"
 import documentRoutes from "./modules/document/documentRoutes.js"
+import chatRoutes from "./modules/chat/chatRoutes.js"          // ← add
 import { initSocket } from "./socket/socketHandler.js"
 import { getRedisClients } from "./utils/redis.js"
 
@@ -24,11 +25,6 @@ const io = new Server(httpServer, {
   },
 })
 
-/*
-  Attach Redis adapter so Socket.IO works across multiple
-  server instances. If Redis is unavailable, fall back to
-  in-memory (works fine for single instance / local dev).
-*/
 const attachRedisAdapter = async () => {
   try {
     const { pubClient, subClient } = getRedisClients()
@@ -53,6 +49,7 @@ app.use(express.json())
 
 app.use("/api/auth", authRoutes)
 app.use("/api/documents", documentRoutes)
+app.use("/api/chat", chatRoutes)                               // ← add
 app.get("/api/health", (_, res) => res.json({ status: "ok", app: "lineCODE" }))
 
 initSocket(io)
