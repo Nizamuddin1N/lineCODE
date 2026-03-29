@@ -1,12 +1,14 @@
 import express from "express"
 import { createServer } from "http"
 import { Server } from "socket.io"
+import { createAdapter } from "@socket.io/redis-adapter"
 import dotenv from "dotenv"
 import cors from "cors"
 import connectDB from "./config/db.js"
 import authRoutes from "./modules/auth/authRoutes.js"
 import documentRoutes from "./modules/document/documentRoutes.js"
 import { initSocket } from "./socket/socketHandler.js"
+import { getRedisClients } from "./utils/redis.js"
 
 dotenv.config()
 connectDB()
@@ -21,6 +23,27 @@ const io = new Server(httpServer, {
     credentials: true,
   },
 })
+
+/*
+  Attach Redis adapter so Socket.IO works across multiple
+  server instances. If Redis is unavailable, fall back to
+  in-memory (works fine for single instance / local dev).
+*/
+const attachRedisAdapter = async () => {
+  try {
+    const { pubClient, subClient } = getRedisClients()
+    await Promise.all([
+      new Promise((res) => pubClient.once("ready", res)),
+      new Promise((res) => subClient.once("ready", res)),
+    ])
+    io.adapter(createAdapter(pubClient, subClient))
+    console.log("Socket.IO Redis adapter attached")
+  } catch (err) {
+    console.warn("Redis unavailable, using in-memory adapter:", err.message)
+  }
+}
+
+attachRedisAdapter()
 
 app.use(cors({
   origin: process.env.CLIENT_URL || "http://localhost:5173",
