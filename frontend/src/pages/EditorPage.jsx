@@ -18,6 +18,7 @@ export default function EditorPage() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const [versions, setVersions] = useState([])
+  const [restoredContent, setRestoredContent] = useState(null)
   const [doc, setDoc] = useState(null)
   const [loading, setLoading] = useState(true)
   const [sidebarTab, setSidebarTab] = useState("users")
@@ -97,15 +98,17 @@ export default function EditorPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const restoreVersion = async (versionId) => {
+    const restoreVersion = async (versionId) => {
     try {
-      const res = await api.post(`/documents/${id}/versions/restore`, { versionId })
-      setDoc((d) => ({ ...d, content: res.data.content }))
-      fetchVersions()
+        const res = await api.post(`/documents/${id}/versions/restore`, { versionId })
+        // Push restored content directly into Monaco — no reload needed
+        setRestoredContent(res.data.content)
+        setDoc((d) => ({ ...d, content: res.data.content }))
+        fetchVersions()
     } catch (err) {
-      alert(err.response?.data?.error || "Restore failed")
+        alert(err.response?.data?.error || "Restore failed")
     }
-  }
+    }
 
   if (loading) return (
     <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0a0a0f" }}>
@@ -174,6 +177,7 @@ export default function EditorPage() {
             emitOperation={emitOperation}
             emitCursor={emitCursor}
             readOnly={isReadOnly}
+            restoredContent={restoredContent}
           />
         </div>
 

@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import MonacoEditor from "@monaco-editor/react"
-import { useSocket } from "../../hooks/useSocket"
 import CursorLayer from "./CursorLayer"
 import useAuthStore from "../../store/authStore"
 
 const SAVE_DEBOUNCE = 2000
 
-export default function CodeEditor({ docId, initialContent, initialLanguage, onContentChange, socket, connected, emitOperation, emitCursor, readOnly = false,}) {
+export default function CodeEditor({
+  docId,
+  initialContent,
+  initialLanguage,
+  onContentChange,
+  socket,
+  connected,
+  emitOperation,
+  emitCursor,
+  readOnly = false,
+  restoredContent,
+}) {
   const editorRef = useRef(null)
   const monacoRef = useRef(null)
   const revisionRef = useRef(0)
@@ -19,7 +29,32 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
   const [remoteCursors, setRemoteCursors] = useState([])
 
   const { user } = useAuthStore()
-  // ─── Listen to incoming socket events ──────────────────────────
+
+  // ─── Restore version directly into Monaco ───────────────────────
+  /*
+    Why useEffect here and not just setValue() in the handler?
+    Because restoredContent comes from EditorPage as a prop.
+    The prop change triggers a re-render. We need to wait until
+    after the render to access the Monaco model via editorRef.
+    useEffect runs after render — perfect timing.
+  */
+  useEffect(() => {
+    if (restoredContent === undefined || restoredContent === null) return
+    const editor = editorRef.current
+    if (!editor) return
+    const model = editor.getModel()
+    if (!model) return
+
+    // Push content directly into Monaco internal model
+    // This bypasses React state and updates the editor immediately
+    isRemoteChange.current = true
+    model.setValue(restoredContent)
+    setContent(restoredContent)
+    setSaveStatus("saved")
+    isRemoteChange.current = false
+  }, [restoredContent])
+
+  // ─── Listen to incoming socket events ───────────────────────────
   useEffect(() => {
     if (!socket) return
 
@@ -30,7 +65,6 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
     })
 
     socket.on("receive-operation", ({ operation, revision }) => {
-      // Mark as remote so our onChange handler doesn't re-emit
       isRemoteChange.current = true
       applyRemoteOperation(operation)
       revisionRef.current = revision
@@ -94,35 +128,35 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
   // ─── Handle local edits ─────────────────────────────────────────
   const handleChange = useCallback((newValue) => {
     if (isRemoteChange.current) return
+    if (newValue === undefined) return
 
     const oldValue = content
     setContent(newValue)
     onContentChange?.(newValue)
 
-    // Build OT operation from the diff
     const operation = buildOperation(oldValue, newValue)
     if (operation) {
-      emitOperation(operation, revisionRef.current)
+      emitOperation?.(operation, revisionRef.current)
     }
 
-    // Auto-save debounce
     setSaveStatus("unsaved")
     clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       setSaveStatus("saving...")
-      onContentChange?.(newValue, true) // true = trigger save
+      onContentChange?.(newValue, true)
     }, SAVE_DEBOUNCE)
   }, [content, emitOperation])
 
   // ─── Build OT operation from two strings ────────────────────────
   const buildOperation = (oldStr, newStr) => {
-    /*
-      Simple diff — find the first position where strings differ.
-      Production systems use Myers diff algorithm.
-      For our purpose this handles the vast majority of single-edit cases.
-    */
+    if (!oldStr && !newStr) return null
+
     let start = 0
-    while (start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) {
+    while (
+      start < oldStr.length &&
+      start < newStr.length &&
+      oldStr[start] === newStr[start]
+    ) {
       start++
     }
 
@@ -149,9 +183,9 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
     return null
   }
 
-  // ─── Emit cursor position on selection change ───────────────────
+  // ─── Emit cursor position on selection change ────────────────────
   const handleCursorChange = useCallback((e) => {
-    emitCursor({
+    emitCursor?.({
       lineNumber: e.position.lineNumber,
       column: e.position.column,
     })
@@ -161,6 +195,9 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
     editorRef.current = editor
     monacoRef.current = monaco
     editor.onDidChangeCursorPosition(handleCursorChange)
+
+    // Mark save as saved once editor is ready
+    setSaveStatus("saved")
   }
 
   return (
@@ -168,8 +205,11 @@ export default function CodeEditor({ docId, initialContent, initialLanguage, onC
       <div style={s.statusBar}>
         <span style={{ ...s.connDot, background: connected ? "#2ecc71" : "#e74c3c" }} />
         <span style={s.connText}>{connected ? "Live" : "Reconnecting..."}</span>
+        {readOnly && <span style={s.readOnlyBadge}>read only</span>}
         <span style={s.lang}>{language}</span>
-        <span style={s.saveStatus}>{saveStatus}</span>
+        <span style={s.saveStatus}>
+          {saveStatus === "saved" ? "✓ saved" : saveStatus}
+        </span>
       </div>
 
       <div style={s.editorWrap}>
@@ -210,6 +250,7 @@ const s = {
   statusBar: { height: 28, background: "#111118", borderBottom: "1px solid #2a2a3a", display: "flex", alignItems: "center", gap: 10, padding: "0 16px", flexShrink: 0 },
   connDot: { width: 7, height: 7, borderRadius: "50%", flexShrink: 0 },
   connText: { fontSize: 11, color: "#8888a0" },
+  readOnlyBadge: { fontSize: 10, background: "rgba(136,136,160,0.1)", color: "#8888a0", border: "1px solid rgba(136,136,160,0.2)", borderRadius: 4, padding: "1px 6px" },
   lang: { fontSize: 11, color: "#55556a", marginLeft: "auto" },
   saveStatus: { fontSize: 11, color: "#55556a", marginLeft: 12 },
   editorWrap: { flex: 1, position: "relative", overflow: "hidden" },
