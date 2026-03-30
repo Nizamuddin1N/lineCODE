@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import MonacoEditor from "@monaco-editor/react"
 import CursorLayer from "./CursorLayer"
+import EditorToolbar from "./EditorToolbar"
+import AISuggestionPanel from "../AI/AISuggestionPanel"
 import useAuthStore from "../../store/authStore"
+import api from "../../services/api"
 
 const SAVE_DEBOUNCE = 2000
 
@@ -27,26 +30,20 @@ export default function CodeEditor({
   const [language, setLanguage] = useState(initialLanguage || "javascript")
   const [saveStatus, setSaveStatus] = useState("saved")
   const [remoteCursors, setRemoteCursors] = useState([])
+  const [hasSelection, setHasSelection] = useState(false)     // ← new
+  const [aiLoading, setAiLoading] = useState(false)           // ← new
+  const [aiSuggestion, setAiSuggestion] = useState(null)      // ← new
+  const [aiType, setAiType] = useState("improve")             // ← new
 
   const { user } = useAuthStore()
 
   // ─── Restore version directly into Monaco ───────────────────────
-  /*
-    Why useEffect here and not just setValue() in the handler?
-    Because restoredContent comes from EditorPage as a prop.
-    The prop change triggers a re-render. We need to wait until
-    after the render to access the Monaco model via editorRef.
-    useEffect runs after render — perfect timing.
-  */
   useEffect(() => {
     if (restoredContent === undefined || restoredContent === null) return
     const editor = editorRef.current
     if (!editor) return
     const model = editor.getModel()
     if (!model) return
-
-    // Push content directly into Monaco internal model
-    // This bypasses React state and updates the editor immediately
     isRemoteChange.current = true
     model.setValue(restoredContent)
     setContent(restoredContent)
@@ -89,6 +86,72 @@ export default function CodeEditor({
       socket.off("cursor-update")
     }
   }, [socket])
+
+  // ─── AI suggestion ───────────────────────────────────────────────
+  const handleAISuggest = async (type) => {
+    const editor = editorRef.current
+    if (!editor) return
+
+    setAiLoading(true)
+    setAiType(type)
+    setAiSuggestion(null)
+
+    // Get selected text if any, otherwise use full content
+    const selection = editor.getSelection()
+    const selectedText = editor.getModel()?.getValueInRange(selection)
+    const code = selectedText?.trim() || ""
+
+    try {
+      const res = await api.post("/ai/suggest", {
+        code,
+        language,
+        type,
+        fullContent: content,
+      })
+      setAiSuggestion(res.data.suggestion)
+    } catch (err) {
+      setAiSuggestion(
+        err.response?.data?.error || "AI suggestion failed. Check your API key."
+      )
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  // Apply AI suggestion to editor
+  const handleApplySuggestion = () => {
+    /*
+      Two ways to apply:
+      A - Replace entire file content
+      B - Replace only the selection if one exists
+
+      We use B with fallback to A.
+      More surgical — user keeps code they didn't ask to change.
+    */
+    const editor = editorRef.current
+    if (!editor || !aiSuggestion) return
+
+    const model = editor.getModel()
+    const selection = editor.getSelection()
+    const selectedText = model?.getValueInRange(selection)
+
+    // Extract code block from suggestion if wrapped in ```
+    const codeMatch = aiSuggestion.match(/```[\w]*\n?([\s\S]*?)```/)
+    const codeToApply = codeMatch ? codeMatch[1].trim() : aiSuggestion
+
+    if (selectedText?.trim()) {
+      // Replace only selection
+      model.pushEditOperations([], [{
+        range: selection,
+        text: codeToApply,
+      }], () => null)
+    } else {
+      // Replace full content
+      model.setValue(codeToApply)
+    }
+
+    setAiSuggestion(null)
+  }
 
   // ─── Apply a remote operation to Monaco ─────────────────────────
   const applyRemoteOperation = (op) => {
@@ -135,9 +198,7 @@ export default function CodeEditor({
     onContentChange?.(newValue)
 
     const operation = buildOperation(oldValue, newValue)
-    if (operation) {
-      emitOperation?.(operation, revisionRef.current)
-    }
+    if (operation) emitOperation?.(operation, revisionRef.current)
 
     setSaveStatus("unsaved")
     clearTimeout(saveTimerRef.current)
@@ -147,71 +208,62 @@ export default function CodeEditor({
     }, SAVE_DEBOUNCE)
   }, [content, emitOperation])
 
-  // ─── Build OT operation from two strings ────────────────────────
   const buildOperation = (oldStr, newStr) => {
     if (!oldStr && !newStr) return null
-
     let start = 0
-    while (
-      start < oldStr.length &&
-      start < newStr.length &&
-      oldStr[start] === newStr[start]
-    ) {
+    while (start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) {
       start++
     }
-
     if (oldStr.length < newStr.length) {
-      return {
-        type: "insert",
-        position: start,
-        chars: newStr.slice(start, start + (newStr.length - oldStr.length)),
-        userId: user?.id,
-        revision: revisionRef.current,
-      }
+      return { type: "insert", position: start, chars: newStr.slice(start, start + (newStr.length - oldStr.length)), userId: user?.id, revision: revisionRef.current }
     }
-
     if (oldStr.length > newStr.length) {
-      return {
-        type: "delete",
-        position: start,
-        count: oldStr.length - newStr.length,
-        userId: user?.id,
-        revision: revisionRef.current,
-      }
+      return { type: "delete", position: start, count: oldStr.length - newStr.length, userId: user?.id, revision: revisionRef.current }
     }
-
     return null
   }
 
-  // ─── Emit cursor position on selection change ────────────────────
   const handleCursorChange = useCallback((e) => {
-    emitCursor?.({
-      lineNumber: e.position.lineNumber,
-      column: e.position.column,
-    })
+    emitCursor?.({ lineNumber: e.position.lineNumber, column: e.position.column })
   }, [emitCursor])
 
   const handleEditorMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
     editor.onDidChangeCursorPosition(handleCursorChange)
-
-    // Mark save as saved once editor is ready
     setSaveStatus("saved")
+
+    // Track whether user has text selected
+    editor.onDidChangeCursorSelection((e) => {
+      const sel = e.selection
+      const isEmpty =
+        sel.startLineNumber === sel.endLineNumber &&
+        sel.startColumn === sel.endColumn
+      setHasSelection(!isEmpty)
+    })
   }
 
   return (
     <div style={s.wrap}>
+      {/* Status bar */}
       <div style={s.statusBar}>
         <span style={{ ...s.connDot, background: connected ? "#2ecc71" : "#e74c3c" }} />
         <span style={s.connText}>{connected ? "Live" : "Reconnecting..."}</span>
         {readOnly && <span style={s.readOnlyBadge}>read only</span>}
         <span style={s.lang}>{language}</span>
-        <span style={s.saveStatus}>
-          {saveStatus === "saved" ? "✓ saved" : saveStatus}
-        </span>
+        <span style={s.saveStatus}>{saveStatus === "saved" ? "✓ saved" : saveStatus}</span>
       </div>
 
+      {/* AI toolbar */}
+      <EditorToolbar
+        language={language}
+        onAISuggest={handleAISuggest}
+        hasSelection={hasSelection}
+        isLoading={aiLoading}
+        readOnly={readOnly}
+      />
+
+      {/* Editor + AI panel */}
       <div style={s.editorWrap}>
         <MonacoEditor
           height="100%"
@@ -240,6 +292,16 @@ export default function CodeEditor({
           editorRef={editorRef}
           cursors={remoteCursors.filter((c) => c.userId !== user?.id)}
         />
+
+        {/* AI suggestion panel slides up from bottom of editor */}
+        {aiSuggestion && (
+          <AISuggestionPanel
+            suggestion={aiSuggestion}
+            type={aiType}
+            onClose={() => setAiSuggestion(null)}
+            onApply={handleApplySuggestion}
+          />
+        )}
       </div>
     </div>
   )

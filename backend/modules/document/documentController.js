@@ -1,5 +1,5 @@
 import Document from "./documentModel.js"
-import { deleteCache } from "../../utils/redis.js"
+import { setCache, getCache, deleteCache } from "../../utils/redis.js"
 
 export const createDocument = async (req, res) => {
   try {
@@ -32,8 +32,26 @@ export const getMyDocuments = async (req, res) => {
   }
 }
 
-export const getDocument = async (req, res, next) => {
+export const getDocument = async (req, res) => {
   try {
+    const cacheKey = `doc:${req.params.id}`
+
+    // Check cache first — returns in <1ms vs ~50ms DB query
+    const cached = await getCache(cacheKey)
+    if (cached) {
+      const userId = req.user.id.toString()
+      const isOwner = cached.ownerId._id?.toString() === userId ||
+                      cached.ownerId?.toString() === userId
+      const isCollab = cached.collaborators?.some(
+        (c) => c.userId?._id?.toString() === userId ||
+               c.userId?.toString() === userId
+      )
+      if (!isOwner && !isCollab)
+        return res.status(403).json({ error: "Access denied" })
+
+      return res.json(cached)
+    }
+
     const doc = await Document.findById(req.params.id)
       .populate("ownerId", "name email color")
       .populate("collaborators.userId", "name email color")
@@ -49,16 +67,23 @@ export const getDocument = async (req, res, next) => {
     if (!isOwner && !isCollab)
       return res.status(403).json({ error: "Access denied" })
 
-    // Attach role to request for downstream use
-    req.userRole = isOwner
+    const userRole = isOwner
       ? "owner"
-      : doc.collaborators.find((c) => c.userId._id.toString() === userId)?.role
+      : doc.collaborators.find(
+          (c) => c.userId._id.toString() === userId
+        )?.role
 
-    res.json({ ...doc.toObject(), userRole: req.userRole })
+    const docObj = { ...doc.toObject(), userRole }
+
+    // Cache for 5 minutes — invalidated on update/delete
+    await setCache(cacheKey, docObj, 300)
+
+    res.json(docObj)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 }
+
 
 export const updateDocument = async (req, res) => {
   try {

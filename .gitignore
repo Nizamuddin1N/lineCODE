@@ -1,47 +1,22 @@
-# 🔸 Node modules (React / backend)
+# Dependencies
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+*/node_modules/
 
-# 🔸 Environment variables (IMPORTANT)
+# Environment files — never commit these
 .env
-.env.local
-.env.*.local
+.env.production
+backend/.env
+frontend/.env
+frontend/.env.production
 
-# 🔸 Build folders
-build/
+# Build output
 dist/
-.next/
-out/
+build/
 
-# 🔸 Logs
-logs/
-*.log
-
-# 🔸 OS files
+# OS files
 .DS_Store
 Thumbs.db
 
-# 🔸 IDE / Editor files
-.vscode/
-.idea/
-*.swp
-# 🔸 Virtual environment
-venv/
-env/
-
-# 🔸 Database files
-*.sqlite3
-
-# 🔸 Coverage reports
-coverage/
-.coverage
-
-# 🔸 Temporary files
-tmp/
-temp/
-
-# 🔸 Secrets / Keys
-*.pem
-*.key
+# Logs
+*.log
+npm-debug.log*

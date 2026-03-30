@@ -1,3 +1,4 @@
+import "dotenv/config"
 import express from "express"
 import { createServer } from "http"
 import { Server } from "socket.io"
@@ -10,8 +11,9 @@ import documentRoutes from "./modules/document/documentRoutes.js"
 import chatRoutes from "./modules/chat/chatRoutes.js"          // ← add
 import { initSocket } from "./socket/socketHandler.js"
 import { getRedisClients } from "./utils/redis.js"
+import aiRoutes from "./modules/ai/aiRoutes.js"
+import { startKeepAlive } from "./utils/keepAlive.js"
 
-dotenv.config()
 connectDB()
 
 const app = express()
@@ -46,7 +48,7 @@ app.use(cors({
   credentials: true,
 }))
 app.use(express.json())
-
+app.use("/api/ai", aiRoutes)
 app.use("/api/auth", authRoutes)
 app.use("/api/documents", documentRoutes)
 app.use("/api/chat", chatRoutes)                               // ← add
@@ -56,5 +58,6 @@ initSocket(io)
 
 const PORT = process.env.PORT || 5000
 httpServer.listen(PORT, () => console.log(`lineCODE server on port ${PORT}`))
+startKeepAlive(process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`)
 
 export { io }

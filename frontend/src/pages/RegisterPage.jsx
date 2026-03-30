@@ -37,12 +37,12 @@ export default function RegisterPage() {
         <form onSubmit={handle} style={s.form}>
           <div style={s.field}>
             <label style={s.label}>Full name</label>
-            <input style={s.input} type="text" placeholder="Nizam Uddin"
+            <input style={s.input} type="text" placeholder="Nizamuddin"
               value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </div>
           <div style={s.field}>
             <label style={s.label}>Email</label>
-            <input style={s.input} type="email" placeholder="you@example.com"
+            <input style={s.input} type="email" placeholder="nizamuddin00128@gmail.com"
               value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
           </div>
           <div style={s.field}>
