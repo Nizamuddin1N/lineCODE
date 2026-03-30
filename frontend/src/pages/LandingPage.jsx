@@ -7,7 +7,7 @@ const CODE_LINES = [
   { text: "", color: "" },
   { text: "const team = await Room.join({", color: "#e8e8f0" },
   { text: "  document: 'api-service.js',", color: "#9387dd" },
-  { text: "  users: ['nizam', 'alex', 'sara'],", color: "#9387dd" },
+  { text: "  users: ['nizam', 'Nizamuddin', 'sara'],", color: "#9387dd" },
   { text: "  mode: 'realtime',", color: "#9387dd" },
   { text: "})", color: "#e8e8f0" },
   { text: "", color: "" },
@@ -235,7 +235,7 @@ export default function LandingPage() {
             {visibleLines > 5 && (
               <div style={s.fakeCursors}>
                 <div style={{ ...s.fakeCursor, top: 72, left: 180, background: "#2ecc71" }}>
-                  <span style={s.fakeCursorLabel}>alex</span>
+                  <span style={s.fakeCursorLabel}>Nizamuddin</span>
                 </div>
                 <div style={{ ...s.fakeCursor, top: 112, left: 220, background: "#e74c3c" }}>
                   <span style={s.fakeCursorLabel}>sara</span>
@@ -249,7 +249,7 @@ export default function LandingPage() {
             <div style={s.chatBubble}>
               <span style={s.chatAvatar}>A</span>
               <div style={s.chatContent}>
-                <span style={s.chatName}>alex</span>
+                <span style={s.chatName}>Nizamuddin</span>
                 <span style={s.chatMsg}>the transform looks good 👍</span>
               </div>
             </div>
