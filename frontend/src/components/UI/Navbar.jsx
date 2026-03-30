@@ -12,7 +12,7 @@ export default function Navbar() {
 
   return (
     <nav style={s.nav}>
-      <div style={s.brand} onClick={() => navigate("/")}>
+      <div style={s.brand} onClick={() => navigate("/dashboard")}>
         <span style={s.logo}>{"</>"}</span>
         <span style={s.name}>line<strong>CODE</strong></span>
       </div>
