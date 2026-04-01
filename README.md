@@ -140,11 +140,4 @@ If you're deploying your own fork, the only things you need to change are the en
 - No mobile layout yet, designed for desktop
 
 ---
-
-## License
-
-MIT — do whatever you want with it.
-
----
-
 *Built by [Nizamuddin](https://github.com/Nizamuddin1N)*
